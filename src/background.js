@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+/* globals options, feeds, utils, scheduler, constants, menu */
 
 /**
  * @fileoverview Script that runs in the context of the background page.
@@ -61,7 +62,7 @@ background.eventsFromPage = {};
  *   title: (string|undefined)
  * }}
  */
-background.BadgeProperties;
+background.BadgeProperties;  // jshint ignore:line
 
 /**
  * A function that logs all its arguments to memory and to the console if the
@@ -73,7 +74,8 @@ background.log = function(message, opt_dump) {
   if (options.get(options.Options.DEBUG_ENABLE_LOGS)) {
     var timestampedMessage = '[' + moment().toISOString() + '] ' + message;
     if (opt_dump) {
-      background.logs_.push(timestampedMessage + ' ' + JSON.stringify(opt_dump, null /* replacer */, '  '));
+      background.logs_.push(
+          timestampedMessage + ' ' + JSON.stringify(opt_dump, null /* replacer */, '  '));
       window.console.log(timestampedMessage, opt_dump);
     } else {  // Otherwise the log shows a spurious string "undefined" for every opt_dump.
       background.logs_.push(timestampedMessage);
@@ -103,15 +105,24 @@ background.initialize = function() {
  */
 background.initMomentJs_ = function() {
   moment.lang('relative-formatter', {
+    // clang-format off
     relativeTime: {
-      future : "%s", past : "%s",
-      s: "1s", ss : "%ds",
-      m: "1m", mm : "%dm",
-      h: "1h", hh : "%dh",
-      d: "1d", dd : "%dd",
-      M: "1mo", MM : "%dmo",
-      y: "1yr", yy : "%dy"
+      future: '%s',
+      past: '%s',
+      s: '1s',
+      ss: '%ds',
+      m: '1m',
+      mm: '%dm',
+      h: '1h',
+      hh: '%dh',
+      d: '1d',
+      dd: '%dd',
+      M: '1mo',
+      MM: '%dmo',
+      y: '1yr',
+      yy: '%dy'
     }
+    // clang-format on
   });
 };
 
@@ -136,15 +147,12 @@ background.setupMenus_ = function() {
  */
 background.listenForRequests_ = function() {
   chrome.extension.onMessage.addListener(function(request, sender, opt_callback) {
-    switch(request.method) {
+    switch (request.method) {
       case 'events.detected.set':
         background.selectedTabId = sender.tab.id;
         background.eventsFromPage['tab' + background.selectedTabId] = request.parameters.events;
         chrome.browserAction.setIcon({
-          path: {
-            "19": 'icons/calendar_add_19.png',
-            "38": 'icons/calendar_add_38.png'
-          },
+          path: {'19': 'icons/calendar_add_19.png', '38': 'icons/calendar_add_38.png'},
           tabId: sender.tab.id
         });
         break;
@@ -166,7 +174,11 @@ background.listenForRequests_ = function() {
         break;
 
       case 'options.changed':
-        feeds.refreshUI();
+        if (request.optionKey === options.Options.ADD_FROM_CONTEXT_MENU_SHOWN) {
+          menu.updateContextMenus();
+        } else {
+          feeds.refreshUI();
+        }
         break;
 
       case 'authtoken.update':
@@ -217,5 +229,61 @@ background.updateBadge = function(props) {
     chrome.browserAction.setTitle({'title': props.title});
   }
 };
+
+/**
+ * Returns true if all alarms for the given event have expired, relative to the current time.
+ * @param {Array.<Object>} event
+ * @param {Integer} timeUntilAlarmMinutes
+ * @private
+ */
+background.hasAlarmExpired_ = function(event, timeUntilAlarmMinutes) {
+  var alarmSchedule = moment(event.start).subtract(timeUntilAlarmMinutes - 1, 'minutes');
+  return alarmSchedule.isBefore(moment());
+};
+
+/**
+ * Creates notification alarm
+ */
+chrome.alarms.onAlarm.addListener(function(alarm) {
+  if (!options.get(options.Options.SHOW_NOTIFICATIONS)) {
+    return;
+  }
+  var triggeredAlarm = JSON.parse(alarm.name);
+  var eventIndex = -1;
+  var hasAlarm = feeds.events.some(function(event, index) {
+    eventIndex = index;
+    return event.event_id === triggeredAlarm.event_id;
+  });
+
+  if (!hasAlarm) {
+    return;
+  }
+
+  if (background.hasAlarmExpired_(feeds.events[eventIndex], triggeredAlarm.reminder)) {
+    return;
+  }
+
+  chrome.notifications.create(alarm.name, {
+    type: 'basic',
+    requireInteraction: true,
+    iconUrl: 'icons/logo_calendar_96.png',
+    title: feeds.events[eventIndex].title,
+    message: chrome.i18n.getMessage(
+        'your_event_starts_in', [feeds.events[eventIndex].title, triggeredAlarm.reminder])
+  });
+});
+
+/**
+ * Go to calendar on clicked
+ */
+chrome.notifications.onClicked.addListener(function(alarmName) {
+  var eventIndex = 0;
+  feeds.events.some(function(event, index) {
+    eventIndex = index;
+    return event.event_id === alarmName;
+  });
+  chrome.tabs.create({'url': feeds.events[eventIndex].gcal_url});
+});
+
 
 background.initialize();

@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+/*global background, constants*/
 
 /**
  * @fileoverview Handles setting and getting options.
@@ -31,8 +32,10 @@ var options = {};
  * @const
  */
 options.Options = {
+  ADD_FROM_CONTEXT_MENU_SHOWN: 'add_from_context_menu_shown',
   BADGE_TEXT_SHOWN: 'badge-text-shown',
   DEBUG_ENABLE_LOGS: 'debug-enable-logs',
+  SHOW_NOTIFICATIONS: 'show_notifications',
   TIME_UNTIL_NEXT_INCLUDES_ALL_DAY_EVENTS: 'time_until_next_includes_all_day_events'
 };
 
@@ -42,7 +45,26 @@ options.Options = {
  * @private
  */
 options.DEFAULTS_ = {};
+
+/**
+ * Whether the Add To Calendar menu item is shown in the context menu.
+ */
+options.DEFAULTS_[options.Options.ADD_FROM_CONTEXT_MENU_SHOWN] = true;
+
+/**
+ * Whether or not Time Remaining until the next event is shown.
+ */
 options.DEFAULTS_[options.Options.BADGE_TEXT_SHOWN] = true;
+
+/**
+ * Many users are reporting that notifications are being shown at the wrong
+ * time, so this is disabled by default until the original author can debug
+ * this.
+ */
+options.DEFAULTS_[options.Options.SHOW_NOTIFICATIONS] = false;
+
+// Turn on when debugging! There is no UI for this.
+// options.DEFAULTS_[options.Options.DEBUG_ENABLE_LOGS] = true;
 
 /**
  * All option names are prefixed with this when stored in local storage.
@@ -79,9 +101,8 @@ options.get = function(optionKey) {
  * @param {*} optionValue The value of the option.
  */
 options.set = function(optionKey, optionValue) {
-  window.localStorage[options.OPTION_KEY_PREFIX_ + optionKey] =
-      window.JSON.stringify(optionValue);
-  chrome.extension.sendMessage({method: 'options.changed'});
+  window.localStorage[options.OPTION_KEY_PREFIX_ + optionKey] = window.JSON.stringify(optionValue);
+  chrome.extension.sendMessage({method: 'options.changed', optionKey: optionKey});
 };
 
 /**
@@ -90,7 +111,8 @@ options.set = function(optionKey, optionValue) {
  */
 options.installAutoSaveHandlers = function() {
   var optionInputs = document.querySelectorAll(options.OPTIONS_WIDGET_SELECTOR_);
-  for (var i = 0, option; option = optionInputs[i]; ++i) {
+  for (var i = 0; i < optionInputs.length; ++i) {
+    var option = optionInputs[i];
     var type = option.getAttribute('type');
     if (type == 'checkbox') {
       option.addEventListener('change', function(event) {
@@ -136,14 +158,15 @@ options.writeDefaultsToStorage = function() {
  */
 options.loadOptionsUIFromSavedState = function() {
   var optionInputs = document.querySelectorAll(options.OPTIONS_WIDGET_SELECTOR_);
-  for (var i = 0, option; option = optionInputs[i]; ++i) {
+  for (var i = 0; i < optionInputs.length; ++i) {
+    var option = optionInputs[i];
     var type = option.getAttribute('type');
     var name = option.getAttribute('name');
     var value = options.get(name);
     if (type == 'checkbox') {
       option.checked = value ? 'checked' : '';
     } else {
-      if (value != null) {
+      if (value !== null) {
         option.value = value;
       }
     }
@@ -158,39 +181,50 @@ options.loadOptionsUIFromSavedState = function() {
 options.loadCalendarList = function() {
   chrome.extension.getBackgroundPage().background.log('options.loadCalendarList()');
 
-  chrome.storage.local.get('calendars', function(storage) {
+  chrome.storage.local.get(constants.CALENDARS_STORAGE_KEY, function(storage) {
     if (chrome.runtime.lastError) {
-      background.log('Error retrieving settings:', chrome.runtime.lastError);
+      chrome.extension.getBackgroundPage().background.log(
+          'Error retrieving settings:', chrome.runtime.lastError);
     }
 
-    if (storage['calendars']) {
-      var calendars = storage['calendars'];
+    if (storage[constants.CALENDARS_STORAGE_KEY]) {
+      var calendars = storage[constants.CALENDARS_STORAGE_KEY];
 
       for (var calendarId in calendars) {
         var calendar = calendars[calendarId];
         var calendarListEntry = $('<label>');
 
-        $('<input>').attr({
-          'type': 'checkbox',
-          'name': calendar.id,
-          'checked': calendar.visible,
-          'data-color': calendar.backgroundColor
-        }).addClass('calendar-checkbox').css({
-          'outline': 'none',
-          'background': calendar.visible ? calendar.backgroundColor : '',
-          'border': '1px solid ' + calendar.backgroundColor
-        }).on('change', function() {
-          var checkBox = $(this);
-          checkBox.css({'background': checkBox.is(':checked') ? checkBox.attr('data-color') : ''});
-          calendars[ checkBox.attr('name') ].visible = checkBox.is(':checked');
-          chrome.storage.local.set({'calendars': calendars}, function() {
-            if (chrome.runtime.lastError) {
-              background.log('Error saving calendar list options.', chrome.runtime.lastError);
-              return;
-            }
-            chrome.extension.sendMessage({method: 'events.feed.fetch'});
-          });
-        }).appendTo(calendarListEntry);
+        $('<input>')
+            .attr({
+              'type': 'checkbox',
+              'name': calendar.id,
+              'checked': calendar.visible,
+              'data-color': calendar.backgroundColor
+            })
+            .addClass('calendar-checkbox')
+            .css({
+              'outline': 'none',
+              'background': calendar.visible ? calendar.backgroundColor : '',
+              'border': '1px solid ' + calendar.backgroundColor
+            })
+            .on('change',
+                function() {
+                  var checkBox = $(this);
+                  checkBox.css(
+                      {'background': checkBox.is(':checked') ? checkBox.attr('data-color') : ''});
+                  calendars[checkBox.attr('name')].visible = checkBox.is(':checked');
+                  var store = {};
+                  store[constants.CALENDARS_STORAGE_KEY] = calendars;
+                  chrome.storage.local.set(store, function() {
+                    if (chrome.runtime.lastError) {
+                      chrome.extension.getBackgroundPage().background.log(
+                          'Error saving calendar list options.', chrome.runtime.lastError);
+                      return;
+                    }
+                    chrome.extension.sendMessage({method: 'events.feed.fetch'});
+                  });
+                })
+            .appendTo(calendarListEntry);
 
         $('<span>').text(' ' + calendar.title).appendTo(calendarListEntry);
         calendarListEntry.attr('title', calendar.description);

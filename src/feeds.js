@@ -11,6 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+/* globals background, constants, options, utils */
+
 
 /**
  * @fileoverview Retrieves and parses a calendar feed from the server.
@@ -37,8 +39,7 @@ feeds.SETTINGS_API_URL_ = 'https://www.googleapis.com/calendar/v3/users/me/setti
  * @const
  * @private
  */
-feeds.CALENDAR_LIST_API_URL_ =
-    'https://www.googleapis.com/calendar/v3/users/me/calendarList';
+feeds.CALENDAR_LIST_API_URL_ = 'https://www.googleapis.com/calendar/v3/users/me/calendarList';
 
 /**
  * URL of the feed that lists all calendars for the current user.
@@ -56,6 +57,15 @@ feeds.CALENDAR_EVENTS_API_URL_ =
  * @private
  */
 feeds.DAYS_IN_AGENDA_ = 14;
+
+/**
+ * When the interval in DAYS_IN_AGENDA_ has no events, keep looking forward until this number is
+ * reached.
+ * @type {number}
+ * @const
+ * @private
+ */
+feeds.MAX_DAYS_IN_AGENDA_ = 100;
 
 /**
  * All events from visible calendars obtained during the last fetch.
@@ -87,8 +97,8 @@ feeds.lastFetchedAt = null;
  */
 feeds.requestInteractiveAuthToken = function() {
   background.log('feeds.requestInteractiveAuthToken()');
-  chrome.identity.getAuthToken({'interactive': true}, function (accessToken) {
-    if (chrome.runtime.lastError || !authToken) {
+  chrome.identity.getAuthToken({'interactive': true}, function(accessToken) {
+    if (chrome.runtime.lastError || !accessToken) {
       background.log('getAuthToken', chrome.runtime.lastError.message);
       return;
     }
@@ -104,7 +114,7 @@ feeds.requestInteractiveAuthToken = function() {
 feeds.fetchSettings = function() {
   background.log('feeds.fetchSettings()');
 
-  chrome.identity.getAuthToken({'interactive': false}, function (authToken) {
+  chrome.identity.getAuthToken({'interactive': false}, function(authToken) {
     if (chrome.runtime.lastError) {
       background.log('getAuthToken', chrome.runtime.lastError.message);
       return;
@@ -112,9 +122,7 @@ feeds.fetchSettings = function() {
     _gaq.push(['_trackEvent', 'Fetch', 'Settings']);
 
     $.ajax(feeds.SETTINGS_API_URL_, {
-      headers: {
-        'Authorization': 'Bearer ' + authToken
-      },
+      headers: {'Authorization': 'Bearer ' + authToken},
       success: function(settings) {
         for (var settingId in settings.items) {
           var setting = settings.items[settingId];
@@ -146,13 +154,13 @@ feeds.fetchCalendars = function() {
   background.log('feeds.fetchCalendars()');
   chrome.extension.sendMessage({method: 'sync-icon.spinning.start'});
 
-  chrome.storage.local.get('calendars', function(storage) {
+  chrome.storage.local.get(constants.CALENDARS_STORAGE_KEY, function(storage) {
     if (chrome.runtime.lastError) {
       background.log('Error retrieving settings: ', chrome.runtime.lastError.message);
     }
 
-    var storedCalendars = storage['calendars'] || {};
-    chrome.identity.getAuthToken({'interactive': false}, function (authToken) {
+    var storedCalendars = storage[constants.CALENDARS_STORAGE_KEY] || {};
+    chrome.identity.getAuthToken({'interactive': false}, function(authToken) {
       if (chrome.runtime.lastError) {
         chrome.extension.sendMessage({method: 'sync-icon.spinning.stop'});
         feeds.refreshUI();
@@ -161,9 +169,7 @@ feeds.fetchCalendars = function() {
       _gaq.push(['_trackEvent', 'Fetch', 'CalendarList']);
 
       $.ajax(feeds.CALENDAR_LIST_API_URL_, {
-        headers: {
-          'Authorization': 'Bearer ' + authToken
-        },
+        headers: {'Authorization': 'Bearer ' + authToken},
         success: function(data) {
           var calendars = {};
           for (var i = 0; i < data.items.length; i++) {
@@ -180,8 +186,8 @@ feeds.fetchCalendars = function() {
             var serverCalendarID = calendar.id;
             var storedCalendar = storedCalendars[serverCalendarID] || {};
 
-            var visible = (typeof storedCalendar.visible !== 'undefined') ?
-                storedCalendar.visible : calendar.selected;
+            var visible = (typeof storedCalendar.visible !== 'undefined') ? storedCalendar.visible :
+                                                                            calendar.selected;
 
             var mergedCalendar = {
               id: serverCalendarID,
@@ -196,7 +202,9 @@ feeds.fetchCalendars = function() {
             calendars[serverCalendarID] = mergedCalendar;
           }
 
-          chrome.storage.local.set({'calendars': calendars}, function() {
+          var store = {};
+          store[constants.CALENDARS_STORAGE_KEY] = calendars;
+          chrome.storage.local.set(store, function() {
             if (chrome.runtime.lastError) {
               background.log('Error saving settings: ', chrome.runtime.lastError.message);
               return;
@@ -210,7 +218,7 @@ feeds.fetchCalendars = function() {
           background.log('Fetch Error (Calendars)', response.statusText);
           if (response.status === 401) {
             feeds.refreshUI();
-            chrome.identity.removeCachedAuthToken({ 'token': authToken }, function() {});
+            chrome.identity.removeCachedAuthToken({'token': authToken}, function() {});
           }
         }
       });
@@ -231,20 +239,20 @@ feeds.fetchEvents = function() {
   feeds.lastFetchedAt = new Date();
   background.updateBadge({'title': chrome.i18n.getMessage('fetching_feed')});
 
-  chrome.storage.local.get('calendars', function(storage) {
+  chrome.storage.local.get(constants.CALENDARS_STORAGE_KEY, function(storage) {
     if (chrome.runtime.lastError) {
       background.log('Error retrieving settings:', chrome.runtime.lastError.message);
       return;
     }
 
-    if (!storage['calendars']) {
+    if (!storage[constants.CALENDARS_STORAGE_KEY]) {
       // We don't have any calendars yet? Probably the first time.
       feeds.fetchCalendars();
       return;
     }
 
-    var calendars = storage['calendars'] || {};
-    background.log('storage[calendars]:', calendars);
+    var calendars = storage[constants.CALENDARS_STORAGE_KEY] || {};
+    background.log('storage[constants.CALENDARS_STORAGE_KEY]: ', calendars);
 
     var hiddenCalendars = [];
     var allEvents = [];
@@ -266,6 +274,7 @@ feeds.fetchEvents = function() {
             });
             feeds.events = allEvents;
             feeds.refreshUI();
+            feeds.updateNotification();
           }
         });
       } else {
@@ -289,18 +298,7 @@ feeds.fetchEvents = function() {
 feeds.fetchEventsFromCalendar_ = function(feed, callback) {
   background.log('feeds.fetchEventsFromCalendar_()', feed.title);
 
-  var fromDate = moment();
-  var toDate = moment().add('days', feeds.DAYS_IN_AGENDA_);
-
-  var feedUrl = feeds.CALENDAR_EVENTS_API_URL_.replace('{calendarId}', encodeURIComponent(feed.id)) + ([
-    'timeMin=' + encodeURIComponent(fromDate.toISOString()),
-    'timeMax=' + encodeURIComponent(toDate.toISOString()),
-    'maxResults=500',
-    'orderBy=startTime',
-    'singleEvents=true'
-  ].join('&'));
-
-  chrome.identity.getAuthToken({'interactive': false}, function (authToken) {
+  chrome.identity.getAuthToken({'interactive': false}, function(authToken) {
     if (chrome.runtime.lastError || !authToken) {
       background.log('getAuthToken', chrome.runtime.lastError.message);
       chrome.extension.sendMessage({method: 'sync-icon.spinning.stop'});
@@ -309,68 +307,138 @@ feeds.fetchEventsFromCalendar_ = function(feed, callback) {
     }
     _gaq.push(['_trackEvent', 'Fetch', 'Events']);
 
-    $.ajax(feedUrl, {
-      headers: {
-        'Authorization': 'Bearer ' + authToken
-      },
-      success: (function(feed) {
-        return function(data) {
-          background.log('Received events, now parsing.', feed.title);
-          var events = [];
-          for (var i = 0; i < data.items.length; i++) {
-            var eventEntry = data.items[i];
-            var start = utils.fromIso8601(eventEntry.start.dateTime || eventEntry.start.date);
-            var end = utils.fromIso8601(eventEntry.end.dateTime || eventEntry.end.date);
-
-            var responseStatus = '';
-            if (eventEntry.attendees) {
-              for (var attendeeId in eventEntry.attendees) {
-                var attendee = eventEntry.attendees[attendeeId];
-                if (attendee.self) {  // Of all attendees, only look at the entry for this user (self).
-                  responseStatus = attendee.responseStatus;
-                  break;
-                }
-              }
-            }
-
-            events.push({
-              feed: feed,
-              title: eventEntry.summary || chrome.i18n.getMessage('event_title_unknown'),
-              description: eventEntry.description || '',
-              start: start ? start.valueOf() : null,
-              end: end ? end.valueOf() : null,
-              allday: !end || (start.hours() === 0 && start.minutes() === 0 && end.hours() === 0 && end.minutes() === 0),
-              location: eventEntry.location,
-              hangout_url: eventEntry.hangoutLink,
-              gcal_url: eventEntry.htmlLink,
-              responseStatus: responseStatus
-            });
-          }
-          callback(events);
-        };
-      })(feed),
-      error: function(response) {
-        chrome.extension.sendMessage({method: 'sync-icon.spinning.stop'});
-        _gaq.push(['_trackEvent', 'Fetch', 'Error (Events)', response.statusText]);
-        background.log('Fetch Error (Events)', response.statusText);
-        if (response.status === 401) {
-          feeds.refreshUI();
-          chrome.identity.removeCachedAuthToken({ 'token': authToken }, function() {});
-        }
-        // Must callback here, otherwise the caller keeps waiting for all calendars to load.
-        callback(null);
-      }
-    });
+    var fromDate = moment();
+    feeds.fetchEventsRecursively_(feed, callback, authToken, feeds.DAYS_IN_AGENDA_, fromDate);
   });
 };
 
+
+/**
+ * Fetch events recursively in DAYS_IN_AGENDA_ day intervals until events are found or
+ * MAX_DAYS_IN_AGENDA_ is reached.
+ * @param {Object} feed A feed object: {title:'', url:'', color:''}.
+ * @param {function(?Array.<Object>)} callback A callback called when events
+ *     are available.
+ * @param {string} authToken An authorization token.
+ * @param {int} days Current upper limit of days to fetch
+ * @param {Moment} fromDate Start date for events
+ * @private
+ */
+feeds.fetchEventsRecursively_ = function(feed, callback, authToken, days, fromDate) {
+  var toDate = moment().add('days', days);
+  var feedUrl =
+      feeds.CALENDAR_EVENTS_API_URL_.replace('{calendarId}', encodeURIComponent(feed.id)) + ([
+        'timeMin=' + encodeURIComponent(fromDate.toISOString()),
+        'timeMax=' + encodeURIComponent(toDate.toISOString()), 'maxResults=500',
+        'orderBy=startTime', 'singleEvents=true'
+      ].join('&'));
+
+  $.ajax(feedUrl, {
+    headers: {'Authorization': 'Bearer ' + authToken},
+    success: (function(feed) {
+      return function(data) {
+        if (data.items.length == 0) {
+          var nextInterval = days + feeds.DAYS_IN_AGENDA_;
+          if (nextInterval < feeds.MAX_DAYS_IN_AGENDA_) {
+            feeds.fetchEventsRecursively_(feed, callback, authToken, nextInterval, fromDate);
+            return;
+          }
+        }
+
+        background.log('Received events, now parsing.', feed.title);
+        var events = [];
+        for (var i = 0; i < data.items.length; i++) {
+          var eventEntry = data.items[i];
+          var start = utils.fromIso8601(eventEntry.start.dateTime || eventEntry.start.date);
+          var end = utils.fromIso8601(eventEntry.end.dateTime || eventEntry.end.date);
+
+          var responseStatus = '';
+          if (eventEntry.attendees) {
+            for (var attendeeId in eventEntry.attendees) {
+              var attendee = eventEntry.attendees[attendeeId];
+              if (attendee.self) {
+                // Of all attendees, only look at the entry for this user (self).
+                responseStatus = attendee.responseStatus;
+                break;
+              }
+            }
+          }
+
+          events.push({
+            event_id: eventEntry.id,
+            reminders: eventEntry.reminders && eventEntry.reminders.overrides ?
+                eventEntry.reminders.overrides :
+                data.defaultReminders,
+            feed: feed,
+            title: eventEntry.summary || chrome.i18n.getMessage('event_title_unknown'),
+            description: eventEntry.description || '',
+            start: start ? start.valueOf() : null,
+            end: end ? end.valueOf() : null,
+            allday: !end ||
+                (start.hours() === 0 && start.minutes() === 0 && end.hours() === 0 &&
+                 end.minutes() === 0),
+            location: eventEntry.location,
+            hangout_url: eventEntry.hangoutLink,
+            attachments: eventEntry.attachments,
+            gcal_url: eventEntry.htmlLink,
+            responseStatus: responseStatus
+          });
+        }
+        callback(events);
+      };
+    })(feed),
+    error: function(response) {
+      chrome.extension.sendMessage({method: 'sync-icon.spinning.stop'});
+      _gaq.push(['_trackEvent', 'Fetch', 'Error (Events)', response.statusText]);
+      background.log('Fetch Error (Events)', response.statusText);
+      if (response.status === 401) {
+        feeds.refreshUI();
+        chrome.identity.removeCachedAuthToken({'token': authToken}, function() {});
+      }
+      // Must callback here, otherwise the caller keeps waiting for all calendars to load.
+      callback(null);
+    }
+  });
+};
+
+/**
+ * Updates the notification alarms
+ */
+feeds.updateNotification = function() {
+  if (!options.get(options.Options.SHOW_NOTIFICATIONS)) {
+    return;
+  }
+  chrome.alarms.clearAll();
+
+  for (var i = 0; i < feeds.events.length; i++) {
+    if (feeds.events[i].reminders.length === 0) {
+      continue;
+    }
+    for (var j = 0; j < feeds.events[i].reminders.length; j++) {
+      // Only create notifications of popup types
+      if (feeds.events[i].reminders[j].method !== 'popup') {
+        continue;
+      }
+
+      var timeUntilReminderMinutes = feeds.events[i].reminders[j].minutes;
+      var eventId = {event_id: feeds.events[i].event_id, reminder: timeUntilReminderMinutes};
+
+      var alarmSchedule =
+          moment(feeds.events[i].start).subtract(timeUntilReminderMinutes, 'minutes');
+      if (alarmSchedule.isBefore(moment())) {
+        continue;
+      }
+      chrome.alarms.create(JSON.stringify(eventId), {when: alarmSchedule.valueOf()});
+    }
+  }
+};
 
 /**
  * Updates the 'minutes/hours/days until' visible badge from the events
  * obtained during the last fetch. Does not fetch new data.
  */
 feeds.refreshUI = function() {
-  chrome.identity.getAuthToken({'interactive': false}, function (authToken) {
+  chrome.identity.getAuthToken({'interactive': false}, function(authToken) {
     if (chrome.runtime.lastError || !authToken) {
       background.updateBadge({
         'color': background.BADGE_COLORS.ERROR,
@@ -386,10 +454,7 @@ feeds.refreshUI = function() {
 
   // If there are no more next events to show, reset the badge and bail out.
   if (feeds.nextEvents.length === 0) {
-    background.updateBadge({
-      'text': '',
-      'title': chrome.i18n.getMessage('no_upcoming_events')
-    })
+    background.updateBadge({'text': '', 'title': chrome.i18n.getMessage('no_upcoming_events')});
     return;
   }
 
@@ -403,10 +468,7 @@ feeds.refreshUI = function() {
       'title': feeds.getTooltipForEvents_(feeds.nextEvents)
     });
   } else {  // User has chosen not to show a badge, but we still set a tooltip.
-    background.updateBadge({
-      'text': '',
-      'title': feeds.getTooltipForEvents_(feeds.nextEvents)
-    });
+    background.updateBadge({'text': '', 'title': feeds.getTooltipForEvents_(feeds.nextEvents)});
   }
 
   // Notify the browser action in case it's open.

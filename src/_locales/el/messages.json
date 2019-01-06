@@ -1,6 +1,6 @@
 {
   "google_calendar_extension_name": {
-    "message": "Google Calendar (by Google)",
+    "message": "Google Calendar",
     "description": "The name of this extension."
   },
   "google_calendar_extension_desc": {
@@ -116,4 +116,3 @@
     "description": "When a user does not have access to a particular calendar, the event title is not available; this placeholder text is used instead."
   }
 }
-

@@ -1,6 +1,6 @@
 {
   "google_calendar_extension_name": {
-    "message": "Google Calendar (by Google)",
+    "message": "Google Calendar",
     "description": "The name of this extension."
   },
   "google_calendar_extension_desc": {
@@ -83,9 +83,9 @@
     "message": "The list of events is being updated.",
     "description": "Tooltip text for when the extension is fetching the feed from the server."
   },
-  "toolbar_icon": {
-    "message": "Toolbar Icon",
-    "description": "The section of the Options page that deals with the toolbar icon."
+  "settings_header": {
+    "message": "Settings",
+    "description": "The header for the Options section that deals with extension settings"
   },
   "view_web_calendar": {
     "message": "View Full Calendar",
@@ -114,5 +114,39 @@
   "event_title_unknown": {
     "message": "Busy",
     "description": "When a user does not have access to a particular calendar, the event title is not available; this placeholder text is used instead."
+  },
+  "alert_new_event_added": {
+    "message": "This event has just been added to your calendar: ",
+    "description": "When a new event is added into the user's calendar, an alert message will be displayed for the user to click on it and see the details"
+  },
+  "option_show_notifications": {
+    "message": "Show notifications.",
+    "description": "Show notifications before an event starts."
+  },
+  "show_add_to_google_calendar_menu": {
+    "message": "Add to Google Calendar from menu",
+    "description": "Show the 'Add to Google Calendar' action in context menu"
+  },
+  "date_format_date_header": {
+    "message": "dddd, MMMM D",
+    "description": "Date format to be used in '.date-header'."
+  },
+  "date_format_event_allday": {
+    "message": "MMM D, YYYY",
+    "description": "Date format to be used for all-day and multi-day events."
+  },
+  "your_event_starts_in": {
+    "message": "$eventName$ starts in $minutes$ minutes",
+    "description": "Shows the reminder of the event",
+    "placeholders": {
+      "eventName": {
+        "content": "$1",
+        "example": "SomeEvent"
+      },
+      "minutes": {
+        "content": "$2",
+        "example": "42"
+      }
+    }
   }
 }
